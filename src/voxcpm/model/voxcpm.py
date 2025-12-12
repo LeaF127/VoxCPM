@@ -413,6 +413,30 @@ class VoxCPMModel(nn.Module):
     ) -> Generator[Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]], None, None]:
         return self._generate_with_prompt_cache(*args, streaming=True, **kwargs)
 
+    def stream_speak(
+        self,
+        target_text: str,
+        prompt_cache: dict = None,
+        min_len: int = 2,
+        max_len: int = 2000,
+        inference_timesteps: int = 10,
+        cfg_value: float = 2.0,
+    ) -> Generator[Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]], None, None]:
+        """
+        轻量流式封装，返回 (audio_chunk, text_token, pred_audio_feat) 生成器。
+        """
+        stream = self._generate_with_prompt_cache(
+            target_text=target_text,
+            prompt_cache=prompt_cache,
+            min_len=min_len,
+            max_len=max_len,
+            inference_timesteps=inference_timesteps,
+            cfg_value=cfg_value,
+            streaming=True,
+        )
+        for audio_chunk, text_token, pred_audio_feat in stream:
+            yield audio_chunk, text_token, pred_audio_feat
+
     @torch.inference_mode()
     def _generate_with_prompt_cache(
         self,
@@ -473,6 +497,7 @@ class VoxCPMModel(nn.Module):
             dim=-1,
         )
 
+        # 对齐文本和音频特征长度
         audio_length = prompt_audio_feat.size(0)
         text_length = text_token.shape[0]
         text_pad_token = torch.zeros(audio_length, dtype=torch.int32, device=text_token.device)
@@ -486,6 +511,7 @@ class VoxCPMModel(nn.Module):
         text_mask = torch.cat([torch.ones(text_length), torch.zeros(audio_length)]).type(torch.int32).to(text_token.device)
         audio_mask = torch.cat([torch.zeros(text_length), torch.ones(audio_length)]).type(torch.int32).to(text_token.device)
 
+        # 保持与训练维度一致
         text_token = text_token.unsqueeze(0).to(self.device)
         text_mask = text_mask.unsqueeze(0).to(self.device)
         audio_feat = audio_feat.unsqueeze(0).to(self.device).to(get_dtype(self.config.dtype))

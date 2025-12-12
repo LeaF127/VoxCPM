@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 import numpy as np
-from typing import Generator
+from typing import Generator, List, Tuple
 from huggingface_hub import snapshot_download
 from .model.voxcpm import VoxCPMModel
 
@@ -95,6 +95,25 @@ class VoxCPM:
 
     def generate_streaming(self, *args, **kwargs) -> Generator[np.ndarray, None, None]:
         return self._generate(*args, streaming=True, **kwargs)
+
+    def stream_with_prompt_cache(
+        self,
+        text: str,
+        prompt_cache: dict = None,
+        cfg_value: float = 2.0,
+        inference_timesteps: int = 10,
+    ) -> Generator[Tuple[np.ndarray, torch.Tensor, List[torch.Tensor]], None, None]:
+        """
+        对外暴露的流式接口，便于迭代消费 VoxCPM 生成块。
+        """
+        stream = self.tts_model.stream_speak(
+            target_text=text,
+            prompt_cache=prompt_cache,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+        )
+        for audio_chunk, text_token, pred_audio_feat in stream:
+            yield audio_chunk.squeeze(0).cpu().numpy(), text_token, pred_audio_feat
 
     def _generate(self, 
             text : str,
