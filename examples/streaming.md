@@ -29,10 +29,25 @@ python -m voxcpm.cli.stream_translate \
 - MT: 目前为直通占位函数，可按需替换
 - TTS: `generate_with_prompt_cache_streaming` 连续输出音频块
 
+## 测试验证
+
+运行基本功能测试（不需要模型）:
+```bash
+python test_streaming.py --wav ./examples/example.wav
+```
+
+完整流程测试（需要模型）:
+```bash
+python -m voxcpm.cli.stream_translate \
+  --wav ./examples/example.wav \
+  --model-path ./models/VoxCPM-0.5B
+```
+
 ## 常见问题
 - 未安装 CUDA 时默认使用 CPU，延迟会升高
 - 若未安装 `funasr` 会提示缺失，请先安装
 - 需要 16k 单声道 PCM wav 输入；其他采样率请先转换
+- 首次运行会下载 ASR 模型（SenseVoiceSmall），请确保网络连接
 
 
 

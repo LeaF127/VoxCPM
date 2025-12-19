@@ -180,7 +180,12 @@ class VoxCPMModel(nn.Module):
         return next(self._generate(*args, streaming=False, **kwargs))
 
     def generate_streaming(self, *args, **kwargs) -> Generator[torch.Tensor, None, None]:
-        return self._generate(*args, streaming=True, **kwargs)
+        """生成流式语音输出"""
+        for audio_chunk in self._generate_streaming(*args, **kwargs):
+            # 实时输出音频块
+            yield audio_chunk
+            
+        # return self._generate(*args, streaming=True, **kwargs)
 
     @torch.inference_mode()
     def _generate(
@@ -412,30 +417,6 @@ class VoxCPMModel(nn.Module):
         self, *args, **kwargs
     ) -> Generator[Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]], None, None]:
         return self._generate_with_prompt_cache(*args, streaming=True, **kwargs)
-
-    def stream_speak(
-        self,
-        target_text: str,
-        prompt_cache: dict = None,
-        min_len: int = 2,
-        max_len: int = 2000,
-        inference_timesteps: int = 10,
-        cfg_value: float = 2.0,
-    ) -> Generator[Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]], None, None]:
-        """
-        轻量流式封装，返回 (audio_chunk, text_token, pred_audio_feat) 生成器。
-        """
-        stream = self._generate_with_prompt_cache(
-            target_text=target_text,
-            prompt_cache=prompt_cache,
-            min_len=min_len,
-            max_len=max_len,
-            inference_timesteps=inference_timesteps,
-            cfg_value=cfg_value,
-            streaming=True,
-        )
-        for audio_chunk, text_token, pred_audio_feat in stream:
-            yield audio_chunk, text_token, pred_audio_feat
 
     @torch.inference_mode()
     def _generate_with_prompt_cache(
@@ -714,3 +695,104 @@ class VoxCPMModel(nn.Module):
             model_state_dict[f"audio_vae.{kw}"] = val
         model.load_state_dict(model_state_dict, strict=True)
         return model.to(model.device).eval().optimize(disable=not optimize)
+
+    def process_streaming_audio(self, audio_stream: Generator[torch.Tensor, None, None]):
+        """处理实时音频流"""
+        audio_buffer = []
+        for audio_chunk in audio_stream:
+            audio_buffer.append(audio_chunk)
+            if len(audio_buffer) >= self.chunk_size:
+                # 处理缓冲区中的音频
+                yield self._process_audio_chunk(audio_buffer)
+                audio_buffer = []
+                
+    def _process_audio_chunk(self, audio_chunk: List[torch.Tensor]):
+        """处理音频块"""
+        # 在这里实现音频块的处理逻辑
+        pass
+    
+    def process_streaming_text(self, text_stream: Generator[str, None, None]):
+        """处理实时文本流"""
+        text_buffer = ""
+        for text_chunk in text_stream:
+            text_buffer += text_chunk
+            # 处理缓冲区中的文本
+            yield self._process_text_chunk(text_buffer)
+            
+    def _process_text_chunk(self, text_chunk: str):
+        """处理文本块"""
+        # 在这里实现文本块的处理逻辑
+        pass
+
+    import asyncio
+
+    async def async_generate(self, *args, **kwargs):
+        """异步生成语音"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.generate, *args, **kwargs)
+
+    @torch.inference_mode()
+    def _generate(
+        self,
+        target_text_stream: Generator[str, None, None],
+        prompt_text: str = "",
+        prompt_wav_path: str = "",
+        min_len: int = 2,
+        max_len: int = 2000,
+        inference_timesteps: int = 10,
+        cfg_value: float = 2.0,
+        streaming: bool = True,
+    ) -> Generator[torch.Tensor, None, None]:
+        """
+        支持流式输入的生成方法。
+        """
+        text_buffer = prompt_text
+        for text_chunk in target_text_stream:
+            text_buffer += text_chunk
+            text_token = torch.LongTensor(self.text_tokenizer(text_buffer))
+            # ...existing code...
+            for latent_pred, _ in inference_result:
+                decode_audio = self.audio_vae.decode(latent_pred.to(torch.float32))
+                yield decode_audio[..., -self.chunk_size:].squeeze(1).cpu()
+
+    # @torch.inference_mode()
+    # def _inference(
+    #     self,
+    #     text_stream: Generator[torch.Tensor, None, None],
+    #     feat: torch.Tensor,
+    #     feat_mask: torch.Tensor,
+    #     min_len: int = 2,
+    #     max_len: int = 2000,
+    #     inference_timesteps: int = 10,
+    #     cfg_value: float = 2.0,
+    #     streaming: bool = True,
+    # ) -> Generator[Tuple[torch.Tensor, List[torch.Tensor]], None, None]:
+    #     """
+    #     支持流式输入的推理方法。
+    #     """
+    #     for text_chunk in text_stream:
+    #         # 动态更新输入文本
+    #         text = torch.cat([text, text_chunk], dim=1)
+    #         # ...existing code...
+    #         if streaming:
+    #             yield feat_pred, pred_feat_seq
+    #         # ...existing code...
+
+    def process_streaming_audio(self, audio_stream: Generator[torch.Tensor, None, None]):
+        """处理实时音频流"""
+        audio_buffer = []
+        for audio_chunk in audio_stream:
+            audio_buffer.append(audio_chunk)
+            if len(audio_buffer) >= self.chunk_size:
+                # 处理缓冲区中的音频
+                yield self._process_audio_chunk(audio_buffer)
+                audio_buffer = []
+
+    def process_streaming_text(self, text_stream: Generator[str, None, None]):
+        """处理实时文本流"""
+        text_buffer = ""
+        for text_chunk in text_stream:
+            text_buffer += text_chunk
+            yield text_buffer
+
+

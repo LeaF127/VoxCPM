@@ -1,3 +1,4 @@
+import os
 import tempfile
 from dataclasses import dataclass
 from typing import Callable, Generator, Iterable, List, Optional, Tuple, Dict
@@ -106,18 +107,27 @@ class StreamingASR:
         audio = np.concatenate(self._buffer, axis=0)
         self._buffer.clear()
         self._silence_count = 0
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            sf.write(tmp.name, audio, self.sample_rate)
-            res = self.asr_model.generate(input=tmp.name, language=self.language, use_itn=True)
-        text = ""
-        if res and isinstance(res, list):
-            text = res[0].get("text", "")
-            # SenseVoice 会返回 "xxx|>transcript"
-            if "|>" in text:
-                text = text.split("|>")[-1]
-        result = ASRResult(text=text.strip(), is_final=True, segment_index=self._segment_index)
-        self._segment_index += 1
-        return result
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                tmp_path = tmp.name
+                sf.write(tmp_path, audio, self.sample_rate)
+            res = self.asr_model.generate(input=tmp_path, language=self.language, use_itn=True)
+            text = ""
+            if res and isinstance(res, list):
+                text = res[0].get("text", "")
+                # SenseVoice 会返回 "xxx|>transcript"
+                if "|>" in text:
+                    text = text.split("|>")[-1]
+            result = ASRResult(text=text.strip(), is_final=True, segment_index=self._segment_index)
+            self._segment_index += 1
+            return result
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def transcribe(self, chunks: Iterable[np.ndarray], vad: Optional[EnergyVAD] = None) -> Generator[ASRResult, None, None]:
         for chunk in chunks:
