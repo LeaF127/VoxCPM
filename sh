@@ -14,10 +14,12 @@ python s2st_demo/run.py \
   --segment-output-dir s2st_demo/output/segments
 
 python s2st_demo/run.py \
-  --audio s2st_demo/input/jessica.wav \
+  --audio s2st_demo/input/amiya_16k.wav \
   --model-path "./models/openbmb__VoxCPM-0.5B/" \
   --tts-text-source trans \
-  --output s2st_demo/output/jessica.wav \
+  --output s2st_demo/output/amiya.wav \
   --normalize \
   --streaming \
-  --segment-output-dir s2st_demo/output/jessica
+  --segment-output-dir s2st_demo/output/amiya
+
+ffmpeg -i example.wav -ac 1 -ar 16000 -c:a pcm_s16le example_16k.wav

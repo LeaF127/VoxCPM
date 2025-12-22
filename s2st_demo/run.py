@@ -10,11 +10,6 @@ import soundfile as sf
 import torch
 import torchaudio
 
-try:
-    import sounddevice as sd
-except ImportError:
-    sd = None  # type: ignore
-
 from voxcpm.utils import get_test_logger, load_audio, resample_audio, segment_audio_by_timestamp, concatenate_audio
 
 if os.environ.get("PYTHONPATH", "") == "":
@@ -383,9 +378,31 @@ async def audio_stream_generator(
 
     Yields:
         音频数据的字节块（与文件读取格式一致）
+
+    Raises:
+        ImportError: 如果 sounddevice 未安装或 PortAudio 库未找到
     """
-    if sd is None:
-        raise ImportError("需要安装 sounddevice 库：pip install sounddevice")
+    # 延迟导入 sounddevice，避免在模块级别导入时因 PortAudio 缺失而报错
+    try:
+        import sounddevice as sd
+    except ImportError as e:
+        raise ImportError(
+            "需要安装 sounddevice 库：pip install sounddevice\n"
+            "如果已安装但仍报错，可能需要安装 PortAudio 系统库：\n"
+            "  - Windows: 通常 sounddevice 会自动处理\n"
+            "  - Linux: sudo apt-get install portaudio19-dev (Debian/Ubuntu) 或 sudo yum install portaudio-devel (RHEL/CentOS)\n"
+            "  - macOS: brew install portaudio"
+        ) from e
+    except OSError as e:
+        if "PortAudio" in str(e):
+            raise OSError(
+                "PortAudio 库未找到。请安装 PortAudio 系统库：\n"
+                "  - Windows: 通常 sounddevice 会自动处理，如仍有问题请检查安装\n"
+                "  - Linux: sudo apt-get install portaudio19-dev (Debian/Ubuntu) 或 sudo yum install portaudio-devel (RHEL/CentOS)\n"
+                "  - macOS: brew install portaudio\n"
+                "安装后可能需要重新安装 sounddevice: pip install --force-reinstall sounddevice"
+            ) from e
+        raise
 
     # 计算每次读取的样本数和字节数（与 ASRTranslator 的 chunk_size 保持一致）
     bytes_per_second = sample_rate * bit_rate // 8
