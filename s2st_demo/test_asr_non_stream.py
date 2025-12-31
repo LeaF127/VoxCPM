@@ -15,9 +15,9 @@ from asr_translate import ASRTranslator
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="测试 ASRTranslator 非流式模式")
-    parser.add_argument("--ws-url", default=os.getenv("WS_URL", "ws://175.24.179.12:9301/dotcwsasr"))
-    parser.add_argument("--user-id", default=os.getenv("USER_ID", "y123456"))
-    parser.add_argument("--token", default=os.getenv("TOKEN", "token12345-1730889600"))
+    parser.add_argument("--ws-url", default=os.getenv("WS_URL"), help="ASR WebSocket 服务地址（可通过环境变量 WS_URL 设置）")
+    parser.add_argument("--user-id", default=os.getenv("USER_ID"), help="用户 ID（可通过环境变量 USER_ID 设置）")
+    parser.add_argument("--token", default=os.getenv("TOKEN"), help="认证 Token（可通过环境变量 TOKEN 设置）")
     parser.add_argument("--from-lang", default=os.getenv("FROM_LAN", "cn"))
     parser.add_argument("--to-lang", default=os.getenv("TO_LAN", "en"))
     parser.add_argument("--role", default=os.getenv("ROLE", "0"))
@@ -32,6 +32,17 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
     logger = get_test_logger(__file__, console_output=True)
+
+    # 验证必填参数
+    if not args.ws_url:
+        logger.error("--ws-url 参数或环境变量 WS_URL 必须提供")
+        return
+    if not args.user_id:
+        logger.error("--user-id 参数或环境变量 USER_ID 必须提供")
+        return
+    if not args.token:
+        logger.error("--token 参数或环境变量 TOKEN 必须提供")
+        return
 
     audio_path = Path(args.audio)
     if not audio_path.exists():

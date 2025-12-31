@@ -58,9 +58,9 @@ app.add_middleware(
 class StreamingRequest(BaseModel):
     """流式处理请求参数（JSON body）"""
 
-    ws_url: str = Field(default="ws://175.24.179.12:9301/dotcwsasr", description="ASR WebSocket 服务地址")
-    user_id: str = Field(default="y123456", description="用户 ID")
-    token: str = Field(default="token12345-1730889600", description="认证 Token")
+    ws_url: str = Field(..., description="ASR WebSocket 服务地址")
+    user_id: str = Field(..., description="用户 ID")
+    token: str = Field(..., description="认证 Token")
     from_lang: str = Field(default="zh", description="源语言代码")
     to_lang: str = Field(default="en", description="目标语言代码")
     role: str = Field(default="0", description="角色 ID")
@@ -174,9 +174,9 @@ async def health_check():
 @app.post("/streaming")
 async def streaming_s2st(
     audio_file: UploadFile = File(..., description="音频文件（建议 16kHz 单声道 WAV）"),
-    ws_url: str = Form(default="ws://175.24.179.12:9301/dotcwsasr"),
-    user_id: str = Form(default="y123456"),
-    token: str = Form(default="token12345-1730889600"),
+    ws_url: Optional[str] = Form(default=None, description="ASR WebSocket 服务地址（可通过环境变量 WS_URL 设置）"),
+    user_id: Optional[str] = Form(default=None, description="用户 ID（可通过环境变量 USER_ID 设置）"),
+    token: Optional[str] = Form(default=None, description="认证 Token（可通过环境变量 TOKEN 设置）"),
     from_lang: str = Form(default="zh"),
     to_lang: str = Form(default="en"),
     role: str = Form(default="0"),
@@ -200,6 +200,19 @@ async def streaming_s2st(
     """
     request_id = str(uuid.uuid4())[:8]
     _logger.info("[%s] 收到流式处理请求，文件名: %s", request_id, audio_file.filename)
+
+    # 从环境变量读取默认值（如果请求中未提供）
+    ws_url = ws_url or os.getenv("WS_URL")
+    user_id = user_id or os.getenv("USER_ID")
+    token = token or os.getenv("TOKEN")
+
+    # 验证必填参数
+    if not ws_url:
+        raise HTTPException(status_code=400, detail="ws_url 参数或环境变量 WS_URL 必须提供")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id 参数或环境变量 USER_ID 必须提供")
+    if not token:
+        raise HTTPException(status_code=400, detail="token 参数或环境变量 TOKEN 必须提供")
 
     # 创建请求对象
     request = StreamingRequest(

@@ -20,28 +20,42 @@ logger = logging.getLogger(__name__)
 logger.addHandler(file_handler)
 
 # ================ 配置区域 ================
-WS_URL = "ws://175.24.179.12:9301/dotcwsasr"   # 你的WS接口URL
-SAMPLE_RATE = 16000        # 采样率
-BIT_RATE = 16              # 位深
-INTERVAL = 0.1             # 发送间隔（秒）
+import os
+
+# 从环境变量读取配置，如果没有则使用默认值（仅用于开发测试）
+WS_URL = os.getenv("WS_URL")  # 必须通过环境变量设置
+SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", "16000"))  # 采样率
+BIT_RATE = int(os.getenv("BIT_RATE", "16"))  # 位深
+INTERVAL = float(os.getenv("INTERVAL", "0.1"))  # 发送间隔（秒）
 
 from app import VoxCPMDemo
 from tts_module import tts
 from s2st_demo.asr_translate import ASRTranslator
 
-USER_ID = "y123456"
-TOKEN = "token12345-1730889600"             # 格式：token-时间戳
-AUDIO_PATH = "examples/amiya.wav"
-LAN_ID = "0"
-FROM_LAN = "cn"
-TO_LAN = "en"
-ROLE = "0"
+USER_ID = os.getenv("USER_ID")  # 必须通过环境变量设置
+TOKEN = os.getenv("TOKEN")  # 必须通过环境变量设置，格式：token-时间戳
+AUDIO_PATH = os.getenv("AUDIO_PATH", "examples/amiya.wav")
+LAN_ID = os.getenv("LAN_ID", "0")
+FROM_LAN = os.getenv("FROM_LAN", "cn")
+TO_LAN = os.getenv("TO_LAN", "en")
+ROLE = os.getenv("ROLE", "0")
 
 # ================ 模型配置 ================
 tts_model = VoxCPMDemo()
 
 
 async def main():
+    # 验证必填参数
+    if not WS_URL:
+        logger.error("环境变量 WS_URL 必须设置")
+        return
+    if not USER_ID:
+        logger.error("环境变量 USER_ID 必须设置")
+        return
+    if not TOKEN:
+        logger.error("环境变量 TOKEN 必须设置")
+        return
+
     translator = ASRTranslator(
         ws_url=WS_URL,
         user_id=USER_ID,
