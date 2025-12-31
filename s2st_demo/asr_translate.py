@@ -13,6 +13,13 @@ from funasr import AutoModel
 
 from voxcpm.utils import get_test_logger
 
+# 导入 timing_stats（与 run.py 中的导入方式保持一致）
+try:
+    from timing_stats import TimingStats
+except ImportError:
+    # 如果导入失败，定义类型提示以避免类型检查错误
+    TimingStats = None  # type: ignore
+
 
 class ASRTranslator:
     """
@@ -34,6 +41,7 @@ class ASRTranslator:
         bit_rate: int = 16,
         interval: float = 0.1,
         logger: Optional[logging.Logger] = None,
+        timing_stats: Optional[TimingStats] = None,
     ) -> None:
         self.ws_url = ws_url
         self.user_id = user_id
@@ -44,11 +52,13 @@ class ASRTranslator:
         self.lan_id = lan_id
         self.sample_rate = sample_rate
         self.bit_rate = bit_rate
-        self.interval = interval
+        self.interval = interval # 发送音频的间隔时间为0.1秒
         self.bytes_per_second = self.sample_rate * self.bit_rate // 8
-        self.chunk_size = int(self.bytes_per_second * self.interval)
+        self.chunk_size = int(self.bytes_per_second * self.interval) # 每个块的大小为16000*16/8*0.1=2000字节
         self.session_id = str(uuid.uuid4())
         self.logger = get_test_logger(__file__, console_output=False)
+        self.timing_stats = timing_stats  # 用于记录时间戳
+        self.global_t0: Optional[float] = None  # 全局基准时间，用于计算相对时间
 
     def _build_target_url(self) -> str:
         query = (
@@ -70,7 +80,7 @@ class ASRTranslator:
         trans_text = data.get("trans", "") or ""
 
         is_sentence_final = err_code == "0"
-        is_stream_finished = err_code == "10" # 这里存疑
+        is_stream_finished = err_code == "10" # 整体结束
         is_intermediate = err_code == "3"
 
         return {
@@ -84,7 +94,7 @@ class ASRTranslator:
         }
 
     async def _send_audio(self, ws: websockets.WebSocketClientProtocol, audio_path: Path, stop_event: asyncio.Event) -> None:
-        start_time = time.time()
+        start_time = time.perf_counter()
         frame_index = 0
 
         with audio_path.open("rb") as f:
@@ -93,11 +103,15 @@ class ASRTranslator:
                 if not chunk:
                     break
                 frame_index += 1
+                # 记录单句话首个chunk送入ASR的时间
+                if self.timing_stats is not None and self.timing_stats.t1 is None and self.global_t0 is not None:
+                    self.timing_stats.t1 = time.perf_counter() - self.global_t0
+                self.timing_stats.chunks_sent += 1
                 await ws.send(chunk)
                 await asyncio.sleep(self.interval)
 
         await ws.send("end")
-        end_time = time.time()
+        end_time = time.perf_counter()
         self.logger.info("已发送结束命令, 共耗时%.2f秒", end_time - start_time)
 
     async def _send_audio_stream(
@@ -114,13 +128,18 @@ class ASRTranslator:
             audio_stream: 音频流生成器，每次 yield 返回音频字节数据
             stop_event: 停止事件
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
         frame_index = 0
 
         try:
             async for chunk in audio_stream:
-                if stop_event.is_set():
+                if stop_event.is_set(): # 如果停止事件被设置，则停止发送音频
                     break
+
+                # 记录单句话首个chunk送入ASR的时间
+                if self.timing_stats is not None and self.timing_stats.t1 is None and self.global_t0 is not None:
+                    self.timing_stats.t1 = time.perf_counter() - self.global_t0
+
                 if chunk:
                     frame_index += 1
                     await ws.send(chunk)
@@ -129,7 +148,7 @@ class ASRTranslator:
             self.logger.error("发送音频流时出错: %s", e)
         finally:
             await ws.send("end")
-            end_time = time.time()
+            end_time = time.perf_counter()
             self.logger.info("已发送结束命令, 共发送 %d 帧, 耗时 %.2f 秒", frame_index, end_time - start_time)
 
     async def _handle_message(
@@ -140,16 +159,22 @@ class ASRTranslator:
     ) -> Optional[Dict[str, Any]]:
         """统一处理一条消息，并按类型触发回调。"""
         self.logger.info("Server Response: %s", message)
-        parsed = self._parse_message(message)
+        
+        parsed = self._parse_message(message) # 解析消息
         if not parsed:
             self.logger.error("返回值不是 JSON")
             return None
 
+        # 如果消息是中间结果，则触发 on_intermediate 回调
         if parsed["is_intermediate"] and on_intermediate:
             await on_intermediate(parsed)
 
         # 对于每一句完整的话（errCode=0），触发 on_final，方便逐句 TTS
         if parsed["is_sentence_final"] and on_final:
+            # 记录单句话ASR完成的时间
+            if self.timing_stats is not None and self.timing_stats.t2 is None and self.global_t0 is not None:
+                self.timing_stats.t2 = time.perf_counter() - self.global_t0
+                
             await on_final(parsed)
 
         # 流结束时（errCode=10），如果包含文本，也应该触发 on_final，确保最后一句话被提交合成
@@ -157,6 +182,9 @@ class ASRTranslator:
             result_text = parsed.get("result_text", "").strip()
             trans_text = parsed.get("trans_text", "").strip()
             if result_text or trans_text:
+                # 如果 t2 还没有被记录，记录流结束时间作为 ASR 完成时间
+                if self.timing_stats is not None and self.timing_stats.t2 is None and self.global_t0 is not None:
+                    self.timing_stats.t2 = time.perf_counter() - self.global_t0
                 await on_final(parsed)
 
         return parsed
@@ -331,7 +359,7 @@ class ASRRecognizer:
         model_id: str = "iic/SenseVoiceSmall",
         device: Optional[str] = None,
         disable_update: bool = True,
-        log_level: str = "DEBUG",
+        log_level: str = "INFO",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         """

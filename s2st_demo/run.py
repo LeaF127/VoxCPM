@@ -1,7 +1,9 @@
 import argparse
 import asyncio
+import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, AsyncIterator
 
@@ -19,6 +21,7 @@ else:
     
 from asr_translate import ASRTranslator
 from tts import load_voxcpm, synthesize
+from timing_stats import TimingStats, TimingStatsCollector
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ws-url", default=os.getenv("WS_URL", "ws://175.24.179.12:9301/dotcwsasr"))
     parser.add_argument("--user-id", default=os.getenv("USER_ID", "y123456"))
     parser.add_argument("--token", default=os.getenv("TOKEN", "token12345-1730889600"))
-    parser.add_argument("--from-lang", default=os.getenv("FROM_LAN", "cn"))
+    parser.add_argument("--from-lang", default=os.getenv("FROM_LAN", "zh"))
     parser.add_argument("--to-lang", default=os.getenv("TO_LAN", "en"))
     parser.add_argument("--role", default=os.getenv("ROLE", "0"))
     parser.add_argument("--lan-id", default=os.getenv("LAN_ID", "0"))
@@ -104,6 +107,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="音频输入设备 ID（麦克风模式，None 表示使用默认设备）",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="启用调试模式：输出所有时间点和计算的指标（仅流式模式）",
+    )
 
     return parser.parse_args()
 
@@ -149,7 +157,26 @@ async def run_non_streaming_pipeline(
     """
     非流式流程：等待整段音频识别+翻译完成后，一次性合成。
     """
+    # 初始化时间统计，记录流程开始时间作为基准
+    pipeline_start_time = time.perf_counter()
+    stats = TimingStats()
+    
+    # 记录 T0: 用户音频采集完成（文件加载完成），使用相对时间
+    stats.t0 = 0.0  # T0 作为基准时间点，设为 0
+    
+    # 计算输入音频时长
+    try:
+        audio_data, sr = load_audio(audio_path, target_sr=16000, mono=True)
+        stats.input_audio_duration = len(audio_data) / float(sr)
+        logger.info("输入音频时长: %.2f 秒", stats.input_audio_duration)
+    except Exception as e:
+        logger.warning("无法计算输入音频时长: %s", e)
+
     logger.info("开始非流式识别+翻译流程")
+
+    # 将 timing_stats 和基准时间传递给 translator
+    translator.timing_stats = stats
+    translator.global_t0 = pipeline_start_time  # 传递全局基准时间
 
     asr_result = await translator.run(audio_path=str(audio_path), streaming=False)
     if not asr_result:
@@ -167,6 +194,9 @@ async def run_non_streaming_pipeline(
 
     logger.info("即将进入 VoxCPM 合成阶段")
 
+    # 记录 T3: TTS 开始合成，使用相对时间
+    stats.t3 = time.perf_counter() - pipeline_start_time
+
     out_path = synthesize(
         tts=tts,
         text=tts_text,
@@ -179,7 +209,22 @@ async def run_non_streaming_pipeline(
         denoise=args.denoise,
     )
 
+    # 记录 T4: 最后一帧语音播放完成（TTS 合成完成），使用相对时间
+    stats.t4 = time.perf_counter() - pipeline_start_time
+
+    # 读取输出音频，计算时长
+    try:
+        output_audio, output_sr = sf.read(str(out_path))
+        stats.output_audio_duration = len(output_audio) / float(output_sr)
+        logger.info("输出音频时长: %.2f 秒", stats.output_audio_duration)
+    except Exception as e:
+        logger.warning("无法计算输出音频时长: %s", e)
+
     logger.info("端到端流程完成，最终输出音频: %s", out_path)
+    
+    # 输出性能报告
+    logger.info("\n" + stats.format_report())
+    
     return out_path
 
 
@@ -196,34 +241,48 @@ async def run_streaming_pipeline(
     
     利用 ASR 返回的时间戳切分原始音频作为 prompt_wav。
     """
-    logger.info("开始流式识别+翻译+TTS 流程")
+    # 初始化时间统计收集器，记录流程开始时间作为基准
+    stats_collector = TimingStatsCollector()
+    stats_collector.start_global() # 开始全局计时（T0）
+    stats = stats_collector.start_segment() # 开始新的一段统计，并设置 T0
+    translator.timing_stats = stats # 传递当前句子的时间统计
+    translator.global_t0 = stats_collector.global_t0 # 传递全局基准时间
 
+    # 初始化流式处理所需的变量
+    segment_files: List[Path] = [] # 保存音频片段的列表
     segment_output_dir = Path(args.segment_output_dir)
-    segment_output_dir.mkdir(parents=True, exist_ok=True)
-
-    # 加载原始音频用于切分，并重采样为16k
-    logger.info("加载原始音频文件: %s", audio_path)
-    target_sr = 16000  # 原始音频重采样目标采样率
-    original_audio, original_sr = load_audio(audio_path, target_sr=target_sr, mono=True)
-    logger.info("原始音频已重采样为: %d Hz, 时长: %.2f 秒", original_sr, len(original_audio) / original_sr)
-
-    segment_files: List[Path] = []
-    segment_index = 0
-    sample_rate = getattr(tts.tts_model, "sample_rate", 16000)
+    segment_index = 0 # 音频片段索引
+    sample_rate = getattr(tts.tts_model, "sample_rate", 16000) # 采样率
     temp_prompt_files: List[Path] = []  # 用于清理临时文件
     last_intermediate_message: Optional[Dict[str, Any]] = None  # 记录上一条中间消息（errCode=3）
 
+    # 读取音频文件
+    original_audio, target_sr = load_audio(audio_path, target_sr=sample_rate, mono=True)
+    
+    # 定义 on_final_callback 回调函数
     async def on_final_callback(parsed: Dict[str, Any]) -> None:
         """当接收到一句完整的话时触发"""
+        # 更新局部变量
         nonlocal segment_index, last_intermediate_message
+        
+        # 从 translator 获取当前句子的 stats（这是真正被 ASR 记录时间点的对象）
+        current_stats = translator.timing_stats
+        if current_stats is None:
+            logger.warning("[句 %d] 当前 stats 为 None，跳过统计", segment_index + 1)
+            return
 
+        # 输出当前记录的chunks数
+        logger.info("[句 %d] 当前记录的chunks数: %d", segment_index + 1, current_stats.chunks_sent)
+        
         result_text = parsed.get("result_text", "").strip()
         trans_text = parsed.get("trans_text", "").strip()
         raw_data = parsed.get("raw", {}) # 这里是把原始消息保存下来，方便后续使用
 
-        # 提取时间戳（单位：毫秒），确保转换为整数
+        # 提取时间戳（单位：毫秒），确保转换为整数，并计算单句时长
         begin_ms = int(raw_data.get("Begin", 0) or 0)
         end_ms = int(raw_data.get("End", 0) or 0)
+        # 修复计算错误：应该是 (end_ms - begin_ms) / 1000.0
+        current_stats.input_audio_duration = (end_ms - begin_ms) / 1000.0 if end_ms > begin_ms else None
 
         # 临时方案：如果当前是流结束消息（errCode=10）且时间戳为0，使用上一条中间消息的时间戳
         if parsed.get("is_stream_finished") and begin_ms == 0 and end_ms == 0:
@@ -242,6 +301,11 @@ async def run_streaming_pipeline(
         tts_text = _select_tts_text(result_text, trans_text, args.tts_text_source, logger)
         if not tts_text:
             logger.warning("[句 %d] 跳过合成（文本为空）", segment_index + 1)
+            # 完成当前段统计（即使没有合成，也要保存 ASR 的统计信息）
+            stats_collector.finish_segment()
+            # 开始新的一段统计
+            new_stats = stats_collector.start_segment()
+            translator.timing_stats = new_stats
             return
 
         # 根据时间戳切分原始音频作为 prompt_wav
@@ -288,6 +352,10 @@ async def run_streaming_pipeline(
         logger.info("[句 %d] 开始合成，保存到: %s", segment_index + 1, segment_file)
 
         try:
+            # 记录 T3: TTS 开始合成，使用相对时间（基于 global_t0）
+            if stats_collector.global_t0 is not None:
+                current_stats.t3 = time.perf_counter() - stats_collector.global_t0
+            
             audio = tts.generate(
                 text=tts_text,
                 prompt_wav_path=prompt_wav_path,
@@ -301,14 +369,34 @@ async def run_streaming_pipeline(
             sf.write(str(segment_file), audio, sample_rate)
             segment_files.append(segment_file)
             duration = len(audio) / float(sample_rate)
+            current_stats.output_audio_duration = duration
+            
+            # 记录 T4: 最后一帧语音播放完成（音频保存完成），使用相对时间（基于 global_t0）
+            if stats_collector.global_t0 is not None:
+                current_stats.t4 = time.perf_counter() - stats_collector.global_t0
+            
             logger.info("[句 %d] 合成完成，时长 %.2f 秒", segment_index + 1, duration)
             segment_index += 1
+            
+            # 完成当前段统计
+            stats_collector.finish_segment()
+            # 开始新的一段统计
+            new_stats = stats_collector.start_segment()
+            translator.timing_stats = new_stats
         except Exception as e:
             logger.error("[句 %d] 合成失败: %s", segment_index + 1, e, exc_info=True)
+            # 即使合成失败，也要保存当前段的统计信息
+            stats_collector.finish_segment()
+            # 开始新的一段统计
+            new_stats = stats_collector.start_segment()
+            translator.timing_stats = new_stats
 
+    # 定义 on_intermediate_callback 回调函数
     async def on_intermediate_callback(parsed: Dict[str, Any]) -> None:
         """中间结果（可选，用于调试）"""
         nonlocal last_intermediate_message
+        
+        # 更新局部变量
         result_text = parsed.get("result_text", "").strip()
         trans_text = parsed.get("trans_text", "").strip()
         if result_text or trans_text:
@@ -346,6 +434,9 @@ async def run_streaming_pipeline(
     duration = len(final_audio) / float(final_sr)
     logger.info("拼接完成，最终输出: %s，总时长 %.2f 秒", out_path, duration)
     logger.info("片段文件保存在: %s", segment_output_dir)
+    
+    # 输出性能报告
+    logger.info("\n" + stats_collector.format_summary_report(debug=args.debug))
 
     # 清理临时 prompt 文件
     for temp_file in temp_prompt_files:
@@ -359,194 +450,9 @@ async def run_streaming_pipeline(
     return out_path
 
 
-async def audio_stream_generator(
-    sample_rate: int,
-    chunk_duration: float,
-    bit_rate: int = 16,
-    device: Optional[int] = None,
-    logger=None,
-) -> AsyncIterator[bytes]:
-    """
-    从麦克风实时捕获音频并生成音频流。
-
-    Args:
-        sample_rate: 采样率
-        chunk_duration: 每次读取的音频时长（秒）
-        bit_rate: 位深度（默认 16）
-        device: 音频设备 ID，None 表示使用默认设备
-        logger: 日志记录器
-
-    Yields:
-        音频数据的字节块（与文件读取格式一致）
-
-    Raises:
-        ImportError: 如果 sounddevice 未安装或 PortAudio 库未找到
-    """
-    # 延迟导入 sounddevice，避免在模块级别导入时因 PortAudio 缺失而报错
-    try:
-        import sounddevice as sd
-    except ImportError as e:
-        raise ImportError(
-            "需要安装 sounddevice 库：pip install sounddevice\n"
-            "如果已安装但仍报错，可能需要安装 PortAudio 系统库：\n"
-            "  - Windows: 通常 sounddevice 会自动处理\n"
-            "  - Linux: sudo apt-get install portaudio19-dev (Debian/Ubuntu) 或 sudo yum install portaudio-devel (RHEL/CentOS)\n"
-            "  - macOS: brew install portaudio"
-        ) from e
-    except OSError as e:
-        if "PortAudio" in str(e):
-            raise OSError(
-                "PortAudio 库未找到。请安装 PortAudio 系统库：\n"
-                "  - Windows: 通常 sounddevice 会自动处理，如仍有问题请检查安装\n"
-                "  - Linux: sudo apt-get install portaudio19-dev (Debian/Ubuntu) 或 sudo yum install portaudio-devel (RHEL/CentOS)\n"
-                "  - macOS: brew install portaudio\n"
-                "安装后可能需要重新安装 sounddevice: pip install --force-reinstall sounddevice"
-            ) from e
-        raise
-
-    # 计算每次读取的样本数和字节数（与 ASRTranslator 的 chunk_size 保持一致）
-    bytes_per_second = sample_rate * bit_rate // 8
-    chunk_size_bytes = int(bytes_per_second * chunk_duration)
-    chunk_size_samples = chunk_size_bytes // (bit_rate // 8)  # 每个样本的字节数
-
-    dtype = np.int16 if bit_rate == 16 else np.int32
-
-    logger.info("开始从麦克风捕获音频，采样率: %d Hz, 位深度: %d bit, 设备: %s", sample_rate, bit_rate, device or "默认")
-
-    try:
-        with sd.InputStream(samplerate=sample_rate, channels=1, dtype=dtype, device=device) as stream:
-            logger.info("麦克风已就绪，开始录音（按 Ctrl+C 停止）...")
-            while True:
-                audio_chunk, overflowed = stream.read(chunk_size_samples)
-                if overflowed:
-                    logger.warning("音频缓冲区溢出")
-                # 转换为字节，确保格式与文件读取一致
-                audio_bytes = audio_chunk.tobytes()
-                yield audio_bytes
-    except KeyboardInterrupt:
-        logger.info("收到停止信号，结束录音")
-    except Exception as e:
-        logger.error("录音过程中出错: %s", e, exc_info=True)
-        raise
-
-
-async def run_mic_streaming_pipeline(
-    translator: ASRTranslator,
-    tts,
-    args: argparse.Namespace,
-    logger,
-) -> None:
-    """
-    麦克风实时输入流程：从麦克风实时捕获音频，逐句识别+翻译+TTS。
-    """
-    logger.info("开始麦克风实时输入流程")
-
-    segment_output_dir = Path(args.segment_output_dir)
-    segment_output_dir.mkdir(parents=True, exist_ok=True)
-
-    segment_files: List[Path] = []
-    segment_index = 0
-    sample_rate = getattr(tts.tts_model, "sample_rate", 16000)
-    temp_prompt_files: List[Path] = []
-
-    async def on_final_callback(parsed: Dict[str, Any]) -> None:
-        """当接收到一句完整的话时触发"""
-        nonlocal segment_index
-
-        result_text = parsed.get("result_text", "").strip()
-        trans_text = parsed.get("trans_text", "").strip()
-        raw_data = parsed.get("raw", {})
-
-        # 提取时间戳（单位：毫秒）
-        begin_ms = int(raw_data.get("Begin", 0) or 0)
-        end_ms = int(raw_data.get("End", 0) or 0)
-
-        logger.info("[句 %d] ASR: %s", segment_index + 1, result_text)
-        logger.info("[句 %d] 翻译: %s", segment_index + 1, trans_text)
-        logger.info("[句 %d] 时间戳: %d ms - %d ms", segment_index + 1, begin_ms, end_ms)
-
-        tts_text = _select_tts_text(result_text, trans_text, args.tts_text_source, logger)
-        if not tts_text:
-            logger.warning("[句 %d] 跳过合成（文本为空）", segment_index + 1)
-            return
-
-        # 对于麦克风输入，如果没有时间戳，使用用户提供的 prompt（如果存在）
-        prompt_wav_path = None
-        prompt_text_for_tts = None
-
-        if args.prompt_wav:
-            prompt_wav_path = args.prompt_wav
-            prompt_text_for_tts = args.prompt_text or result_text
-            logger.info("[句 %d] 使用用户提供的 prompt_wav", segment_index + 1)
-        else:
-            logger.info("[句 %d] 无 prompt_wav，使用默认合成", segment_index + 1)
-
-        segment_file = segment_output_dir / f"segment_{segment_index:03d}.wav"
-        logger.info("[句 %d] 开始合成，保存到: %s", segment_index + 1, segment_file)
-
-        try:
-            audio = tts.generate(
-                text=tts_text,
-                prompt_wav_path=prompt_wav_path,
-                prompt_text=prompt_text_for_tts,
-                cfg_value=args.cfg_value,
-                inference_timesteps=args.inference_timesteps,
-                normalize=args.normalize,
-                denoise=args.denoise and prompt_wav_path is not None,
-            )
-
-            sf.write(str(segment_file), audio, sample_rate)
-            segment_files.append(segment_file)
-            duration = len(audio) / float(sample_rate)
-            logger.info("[句 %d] 合成完成，时长 %.2f 秒", segment_index + 1, duration)
-            segment_index += 1
-        except Exception as e:
-            logger.error("[句 %d] 合成失败: %s", segment_index + 1, e, exc_info=True)
-
-    async def on_intermediate_callback(parsed: Dict[str, Any]) -> None:
-        """中间结果（可选，用于调试）"""
-        result_text = parsed.get("result_text", "").strip()
-        trans_text = parsed.get("trans_text", "").strip()
-        if result_text or trans_text:
-            logger.debug("[中间结果] ASR: %s, 翻译: %s", result_text, trans_text)
-
-    # 创建音频流生成器
-    audio_stream = audio_stream_generator(
-        sample_rate=args.sample_rate,
-        chunk_duration=args.interval,
-        bit_rate=args.bit_rate,
-        device=args.device,
-        logger=logger,
-    )
-
-    # 执行流式识别+翻译
-    try:
-        await translator.transcribe_streaming(
-            audio_stream=audio_stream,
-            on_intermediate=on_intermediate_callback,
-            on_final=on_final_callback,
-        )
-    except KeyboardInterrupt:
-        logger.info("用户中断，停止处理")
-
-    if segment_files:
-        logger.info("流式识别完成，共 %d 个片段", len(segment_files))
-        logger.info("片段文件保存在: %s", segment_output_dir)
-    else:
-        logger.warning("未生成任何音频片段")
-
-    # 清理临时 prompt 文件
-    for temp_file in temp_prompt_files:
-        try:
-            if temp_file.exists():
-                temp_file.unlink()
-                logger.debug("已删除临时文件: %s", temp_file)
-        except Exception as e:
-            logger.warning("删除临时文件失败 %s: %s", temp_file, e)
-
-
 async def main_async(args: argparse.Namespace) -> None:
     logger = get_test_logger(__file__)
+    logger.setLevel(logging.INFO)
 
     # 初始化 ASR 翻译器
     translator = ASRTranslator(
@@ -564,7 +470,7 @@ async def main_async(args: argparse.Namespace) -> None:
     )
 
     # 加载 VoxCPM 模型（两种模式都需要）
-    logger.info("加载 VoxCPM 模型...")
+    start_time = time.perf_counter()
     tts = load_voxcpm(
         model_path=args.model_path,
         hf_model_id=args.hf_model_id,
@@ -573,12 +479,16 @@ async def main_async(args: argparse.Namespace) -> None:
         no_denoiser=args.no_denoiser,
         no_optimize=args.no_optimize,
     )
-    logger.info("VoxCPM 模型加载完成")
+    logger.info('='*80)
+    logger.info("VoxCPM 模型加载完成，耗时 %.2f 秒", time.perf_counter() - start_time)
+    logger.info('='*80)
 
     # 根据输入模式选择流程
     if args.input_mode == "mic":
         # 麦克风实时输入模式
-        await run_mic_streaming_pipeline(translator, tts, args, logger)
+        # await run_mic_streaming_pipeline(translator, tts, args, logger)
+        logger.warning("麦克风实时输入模式暂未实现")
+        pass
     else:
         # 文件输入模式
         audio_path = Path(args.audio)
