@@ -8,7 +8,7 @@ from funasr import AutoModel
 from pathlib import Path
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 if os.environ.get("HF_REPO_ID", "").strip() == "":
-    os.environ["HF_REPO_ID"] = "openbmb/VoxCPM-0.5B"
+    os.environ["HF_REPO_ID"] = "openbmb/VoxCPM1.5"
 
 import voxcpm
 
@@ -29,7 +29,7 @@ class VoxCPMDemo:
 
         # TTS model (lazy init)
         self.voxcpm_model: Optional[voxcpm.VoxCPM] = None
-        self.default_local_model_dir = "./models/VoxCPM-0.5B"
+        self.default_local_model_dir = "./models/VoxCPM1.5"
 
     # ---------- Model helpers ----------
     def _resolve_model_dir(self) -> str:
@@ -108,7 +108,7 @@ class VoxCPMDemo:
             normalize=do_normalize,
             denoise=denoise,
         )
-        return (16000, wav)
+        return (current_model.tts_model.sample_rate, wav)
 
 
 # ---------- UI Builders ----------
@@ -172,22 +172,22 @@ def create_demo_interface(demo: VoxCPMDemo):
         with gr.Accordion("💡 Pro Tips ｜使用建议", open=False, elem_id="acc_tips"):
             gr.Markdown("""
             ### Prompt Speech Enhancement｜参考语音降噪
-            - **Enable** to remove background noise for a clean, studio-like voice, with an external ZipEnhancer component.  
-              **启用**：通过 ZipEnhancer 组件消除背景噪音，获得更好的音质。
-            - **Disable** to preserve the original audio's background atmosphere.  
-              **禁用**：保留原始音频的背景环境声，如果想复刻相应声学环境。
+            - **Enable** to remove background noise for a clean voice, with an external ZipEnhancer component. However, this will limit the audio sampling rate to 16kHz, restricting the cloning quality ceiling.  
+              **启用**：通过 ZipEnhancer 组件消除背景噪音，但会将音频采样率限制在16kHz，限制克隆上限。
+            - **Disable** to preserve the original audio's all information, including background atmosphere, and support audio cloning up to 44.1kHz sampling rate.  
+              **禁用**：保留原始音频的全部信息，包括背景环境声，最高支持44.1kHz的音频复刻。
 
             ### Text Normalization｜文本正则化
             - **Enable** to process general text with an external WeTextProcessing component.  
-              **启用**：使用 WeTextProcessing 组件，可处理常见文本。
-            - **Disable** to use VoxCPM's native text understanding ability. For example, it supports phonemes input ({HH AH0 L OW1}), try it!  
-              **禁用**：将使用 VoxCPM 内置的文本理解能力。如，支持音素输入（如 {da4}{jia1}好）和公式符号合成，尝试一下！
+              **启用**：使用 WeTextProcessing 组件，可支持常见文本的正则化处理。
+            - **Disable** to use VoxCPM's native text understanding ability. For example, it supports phonemes input (For Chinese, phonemes are converted using pinyin, {ni3}{hao3}; For English, phonemes are converted using CMUDict, {HH AH0 L OW1}), try it!  
+              **禁用**：将使用 VoxCPM 内置的文本理解能力。如，支持音素输入（如中文转拼音：{ni3}{hao3}；英文转CMUDict：{HH AH0 L OW1}）和公式符号合成，尝试一下！
 
             ### CFG Value｜CFG 值
-            - **Lower CFG** if the voice prompt sounds strained or expressive.  
-              **调低**：如果提示语音听起来不自然或过于夸张。
-            - **Higher CFG** for better adherence to the prompt speech style or input text.  
-              **调高**：为更好地贴合提示音频的风格或输入文本。
+            - **Lower CFG** if the voice prompt sounds strained or expressive, or instability occurs with long text input.  
+              **调低**：如果提示语音听起来不自然或过于夸张，或者长文本输入出现稳定性问题。
+            - **Higher CFG** for better adherence to the prompt speech style or input text, or instability occurs with too short text input.
+              **调高**：为更好地贴合提示音频的风格或输入文本， 或者极短文本输入出现稳定性问题。
 
             ### Inference Timesteps｜推理时间步
             - **Lower** for faster synthesis speed.  
@@ -267,7 +267,7 @@ def run_demo(server_name: str = "localhost", server_port: int = 7860, show_error
     demo = VoxCPMDemo()
     interface = create_demo_interface(demo)
     # Recommended to enable queue on Spaces for better throughput
-    interface.queue(max_size=10).launch(server_name=server_name, server_port=server_port, show_error=show_error)
+    interface.queue(max_size=10, default_concurrency_limit=1).launch(server_name=server_name, server_port=server_port, show_error=show_error)
 
 
 if __name__ == "__main__":

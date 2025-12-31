@@ -7,3 +7,4 @@ s2st_demo/output/
 examples/*.wav
 s2st_demo/input/*.wav
 .cursor/
+.DS_Store
