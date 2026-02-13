@@ -24,7 +24,7 @@ try:
     SAFETENSORS_AVAILABLE = True
 except ImportError:
     SAFETENSORS_AVAILABLE = False
-    print("Warning: safetensors not available, will use pytorch format")
+    print("Warning: safetensors not available, will use pytorch format", file=sys.stderr)
 
 from voxcpm.model import VoxCPMModel
 from voxcpm.model.voxcpm import LoRAConfig
@@ -170,7 +170,7 @@ def train(
     # Only print param info on rank 0 to avoid cluttered output
     if accelerator.rank == 0:
         for name, param in model.named_parameters():
-            print(name, param.requires_grad)
+            print(name, param.requires_grad, file=sys.stderr)
 
     optimizer = AdamW(
         (p for p in model.parameters() if p.requires_grad),
@@ -210,12 +210,12 @@ def train(
             cur_step = int(_resume.get("step", start_step))
         except Exception:
             cur_step = start_step
-        print(f"Signal {signum} received. Saving checkpoint at step {cur_step} ...")
+        print(f"Signal {signum} received. Saving checkpoint at step {cur_step} ...", file=sys.stderr)
         try:
             save_checkpoint(_model, _optim, _sched, _save_dir, cur_step, _pretrained, _hf_id, _dist)
-            print("Checkpoint saved. Exiting.")
+            print("Checkpoint saved. Exiting.", file=sys.stderr)
         except Exception as e:
-            print(f"Error saving checkpoint on signal: {e}")
+            print(f"Error saving checkpoint on signal: {e}", file=sys.stderr)
         os._exit(0)
 
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -477,20 +477,28 @@ def generate_sample_audio(model, val_ds, audio_vae, writer, step, accelerator, s
                 log(f"[Audio] Loaded reference audio for sample {i}: duration={len(ref_audio_np)/sample_rate:.2f}s")
         except Exception as e:
             log(f"[Warning] Failed to load reference audio: {e}")
-        
+
+        # 记录原模式，避免异常时状态不一致
+        prev_training = unwrapped_model.training
         try:
             # Inference setup
             unwrapped_model.eval()
-            unwrapped_model.to(torch.bfloat16)
+            # unwrapped_model.to(torch.bfloat16)
             unwrapped_model.audio_vae = audio_vae.to(torch.float32)
             
             log(f"[Audio] Generating sample {i} with text: '{text[:50]}...'")
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                if torch.cuda.is_available()
+                else contextlib.nullcontext()
+            )
             with torch.no_grad():
-                generated = unwrapped_model.generate(target_text=text, inference_timesteps=10, cfg_value=2.0)
+                with autocast_ctx:
+                    generated = unwrapped_model.generate(target_text=text, inference_timesteps=10, cfg_value=2.0)
             
             # Restore training setup
-            unwrapped_model.to(torch.float32)
-            unwrapped_model.audio_vae = None
+            # unwrapped_model.to(torch.float32)
+            # unwrapped_model.audio_vae = None
             
             if generated is None or len(generated) == 0:
                 log(f"[Warning] Generated audio is empty for sample {i}")
@@ -523,6 +531,18 @@ def generate_sample_audio(model, val_ds, audio_vae, writer, step, accelerator, s
             import traceback
             traceback.print_exc()
 
+        finally:
+            # Restore training setup（无论成功失败都恢复）
+            try:
+                # unwrapped_model.to(torch.float32)
+                unwrapped_model.audio_vae = None
+                if prev_training:
+                    unwrapped_model.train()
+                else:
+                    unwrapped_model.eval()
+            except Exception as e:
+                log(f"[Warning] Failed to restore model state: {e}")
+
 
 def load_checkpoint(model, optimizer, scheduler, save_dir: Path):
     """
@@ -553,7 +573,7 @@ def load_checkpoint(model, optimizer, scheduler, save_dir: Path):
             
             # Load only lora weights
             unwrapped.load_state_dict(state_dict, strict=False)
-            print(f"Loaded LoRA weights from {lora_weights_path}")
+            print(f"Loaded LoRA weights from {lora_weights_path}", file=sys.stderr)
     else:
         # Full finetune: load model.safetensors or pytorch_model.bin
         model_path = latest_folder / "model.safetensors"
@@ -569,26 +589,26 @@ def load_checkpoint(model, optimizer, scheduler, save_dir: Path):
                 state_dict = ckpt.get("state_dict", ckpt)
             
             unwrapped.load_state_dict(state_dict, strict=False)
-            print(f"Loaded model weights from {model_path}")
+            print(f"Loaded model weights from {model_path}", file=sys.stderr)
     
     # Load optimizer state
     optimizer_path = latest_folder / "optimizer.pth"
     if optimizer_path.exists():
         optimizer.load_state_dict(torch.load(optimizer_path, map_location="cpu"))
-        print(f"Loaded optimizer state from {optimizer_path}")
+        print(f"Loaded optimizer state from {optimizer_path}", file=sys.stderr)
     
     # Load scheduler state
     scheduler_path = latest_folder / "scheduler.pth"
     if scheduler_path.exists():
         scheduler.load_state_dict(torch.load(scheduler_path, map_location="cpu"))
-        print(f"Loaded scheduler state from {scheduler_path}")
+        print(f"Loaded scheduler state from {scheduler_path}", file=sys.stderr)
     
     # Try to infer step from checkpoint folders
     step_folders = [d for d in save_dir.iterdir() if d.is_dir() and d.name.startswith("step_")]
     if step_folders:
         steps = [int(d.name.split("_")[1]) for d in step_folders]
         resume_step = max(steps)
-        print(f"Resuming from step {resume_step}")
+        print(f"Resuming from step {resume_step}", file=sys.stderr)
         return resume_step
     
     return 0
@@ -603,7 +623,7 @@ def save_checkpoint(model, optimizer, scheduler, save_dir: Path, step: int, pret
     import shutil
     
     save_dir.mkdir(parents=True, exist_ok=True)
-    tag = "latest" if step == 0 else f"step_{step:07d}"
+    tag = f"step_{step:07d}"
     folder = save_dir / tag
     folder.mkdir(parents=True, exist_ok=True)
     
@@ -649,28 +669,14 @@ def save_checkpoint(model, optimizer, scheduler, save_dir: Path, step: int, pret
     torch.save(optimizer.state_dict(), folder / "optimizer.pth")
     torch.save(scheduler.state_dict(), folder / "scheduler.pth")
 
-    # Update (or create) a `latest` symlink pointing to the most recent checkpoint folder
+    # Update (or create) a `latest` folder by copying the most recent checkpoint
     latest_link = save_dir / "latest"
     try:
-        if latest_link.exists() or latest_link.is_symlink():
-            # remove existing link or directory
-            if latest_link.is_dir() and not latest_link.is_symlink():
-                shutil.rmtree(latest_link)
-            else:
-                latest_link.unlink()
-        # Create a symlink pointing to the new folder
-        os.symlink(str(folder), str(latest_link))
+        if latest_link.exists():
+            shutil.rmtree(latest_link)
+        shutil.copytree(folder, latest_link)
     except Exception:
-        # If symlink creation fails (e.g., on Windows or permission issues), fall back to copying
-        try:
-            if latest_link.exists():
-                if latest_link.is_dir():
-                    shutil.rmtree(latest_link)
-                else:
-                    latest_link.unlink()
-            shutil.copytree(folder, latest_link)
-        except Exception:
-            print(f"Warning: failed to update latest checkpoint link at {latest_link}")
+        print(f"Warning: failed to update latest checkpoint at {latest_link}", file=sys.stderr)
 
 
 if __name__ == "__main__":
