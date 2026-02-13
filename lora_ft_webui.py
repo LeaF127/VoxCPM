@@ -467,10 +467,16 @@ def stop_training():
 
 # 自定义CSS样式
 custom_css = """
-/* 整体主题样式 */
+/* 整体主题样式 - 暗色 */
 .gradio-container {
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #e2e8f0;
+}
+
+/* 确保所有文字颜色正确 */
+.gradio-container {
+    color: #e2e8f0 !important;
 }
 
 /* 标题区域样式 - 扁平化设计 */
@@ -507,12 +513,26 @@ custom_css = """
     line-height: 1.3;
 }
 
-/* 标签页样式 */
+/* 标签页样式 - 暗色 */
 .tabs {
-    background: white;
+    background: #1e293b;
     border-radius: 15px;
     padding: 10px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    border: 1px solid #334155;
+}
+
+/* 标签页按钮样式 */
+.tabs button {
+    background: #334155 !important;
+    color: #94a3b8 !important;
+    border: 1px solid #475569 !important;
+}
+
+.tabs button.selected {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+    color: white !important;
+    border-color: #6366f1 !important;
 }
 
 /* 按钮样式增强 */
@@ -564,29 +584,50 @@ custom_css = """
     box-shadow: 0 4px 15px rgba(132, 250, 176, 0.4);
 }
 
-/* 表单区域样式 */
+/* 表单区域样式 - 暗色 */
 .form-section {
-    background: white;
+    background: #1e293b;
     border-radius: 20px;
     padding: 30px;
     margin: 15px 0;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-    border: 1px solid rgba(0,0,0,0.05);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    border: 1px solid #334155;
 }
 
-/* 输入框样式 */
+.form-section label {
+    color: #e2e8f0 !important;
+}
+
+/* 输入框样式 - 暗色 */
 .input-field {
     border-radius: 12px;
-    border: 2px solid #e0e0e0;
+    border: 2px solid #475569;
     padding: 12px 16px;
     transition: all 0.3s ease;
-    background: #fafafa;
+    background: #334155;
+    color: #e2e8f0 !important;
 }
 
 .input-field:focus {
-    border-color: #667eea;
-    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
-    background: white;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+    background: #475569;
+}
+
+/* 文本区域样式 */
+.gradio-container textarea,
+.gradio-container input[type="text"],
+.gradio-container input[type="number"] {
+    background-color: #334155 !important;
+    color: #e2e8f0 !important;
+    border-color: #475569 !important;
+}
+
+.gradio-container textarea:focus,
+.gradio-container input[type="text"]:focus,
+.gradio-container input[type="number"]:focus {
+    background-color: #475569 !important;
+    border-color: #6366f1 !important;
 }
 
 /* 滑块样式 */
@@ -628,19 +669,19 @@ custom_css = """
     box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
-/* 折叠面板样式 */
+/* 折叠面板样式 - 暗色 */
 .accordion {
     border-radius: 12px;
-    border: 2px solid #e0e0e0;
+    border: 2px solid #475569;
     overflow: hidden;
-    background: white;
+    background: #1e293b;
 }
 
 .accordion-header {
-    background: linear-gradient(135deg, #f5f7fa 0%, #e3e7ed 100%);
+    background: linear-gradient(135deg, #334155 0%, #475569 100%);
     padding: 15px 20px;
     font-weight: 600;
-    color: #333;
+    color: #e2e8f0;
 }
 
 /* 状态显示样式 */
@@ -747,11 +788,23 @@ custom_css = """
     box-shadow: 0 3px 12px rgba(0, 0, 0, 0.2) !important;
 }
 
-/* 标签样式优化 */
+/* 标签样式优化 - 暗色 */
 label {
-    color: #333;
+    color: #e2e8f0 !important;
     font-weight: 500;
     margin-bottom: 8px;
+}
+
+/* Markdown 标题样式 - 暗色 */
+.gradio-container h1, .gradio-container h2, .gradio-container h3, .gradio-container h4 {
+    color: #e2e8f0 !important;
+}
+
+.markdown-text h4 {
+    color: #6366f1 !important;
+    font-weight: 600;
+    margin-top: 15px;
+    margin-bottom: 10px;
 }
 
 /* Markdown 标题样式 */
@@ -805,34 +858,130 @@ label {
     margin-bottom: 15px;
 }
 
-/* 信息提示文字样式 */
+/* 信息提示文字样式 - 暗色 */
 .gr-info {
     font-size: 13px;
-    color: #666;
+    color: #94a3b8 !important;
     margin-top: 5px;
 }
 
-/* 区域标题样式优化 */
+/* 下拉菜单样式 - 暗色 */
+.gradio-container .dropdown-menu {
+    background: #1e293b !important;
+    border-color: #475569 !important;
+}
+
+.gradio-container .dropdown-item:hover {
+    background: #334155 !important;
+}
+
+/* 复选框样式 - 暗色 */
+.gradio-container input[type="checkbox"] {
+    background: #334155 !important;
+    border-color: #475569 !important;
+}
+
+/* 示例/帮助文本 - 暗色 */
+.gradio-container .gr-example-text {
+    color: #94a3b8 !important;
+}
+
+/* 边框和分割线 - 暗色 */
+hr {
+    border-color: #334155 !important;
+}
+
+/* 额外的全局样式确保 - 暗色 */
+* {
+    border-color: #475569 !important;
+}
+
+/* 确保所有文本输入框有正确的背景和颜色 */
+input, textarea, select {
+    background-color: #334155 !important;
+    color: #e2e8f0 !important;
+}
+
+/* 按钮悬停效果优化 - 暗色 */
+.gr-button:hover {
+    opacity: 0.9;
+}
+
+/* 区域标题样式优化 - 暗色 */
 .form-section h4 {
-    color: #667eea;
+    color: #6366f1 !important;
     font-weight: 600;
     margin-top: 0;
     margin-bottom: 15px;
     padding-bottom: 10px;
-    border-bottom: 2px solid #f0f0f0;
+    border-bottom: 2px solid #334155;
 }
 
 .form-section strong {
-    color: #667eea;
+    color: #6366f1 !important;
     font-size: 15px;
     display: block;
     margin: 15px 0 10px 0;
+}
+
+/* Markdown 内容样式 - 暗色 */
+.markdown-text {
+    color: #e2e8f0 !important;
+}
+
+/* 信息提示文字样式 - 暗色 */
+.gr-info {
+    font-size: 13px;
+    color: #94a3b8 !important;
+    margin-top: 5px;
 }
 """
 
 with gr.Blocks(
     title="VoxCPM LoRA WebUI",
-    theme=gr.themes.Soft(),
+    theme=gr.themes.Soft(
+        primary_hue="indigo",
+        secondary_hue="purple",
+        neutral_hue="slate",
+        font=gr.themes.GoogleFont("Inter"),
+        radius_size="md",
+    ).set(
+        # 暗色主题颜色设置
+        body_background_fill="*neutral_950",
+        block_background_fill="*neutral_900",
+        block_border_width="1px",
+        block_border_color="*neutral_800",
+        input_background_fill="*neutral_800",
+        input_background_fill_dark="*neutral_800",
+        input_background_fill_focus="*neutral_700",
+        input_background_fill_hover="*neutral_750",
+        border_color_accent="*primary_400",
+        border_color_primary="*primary_500",
+        background_fill_secondary="*neutral_900",
+        background_fill_primary="*neutral_950",
+        # 文字颜色
+        body_text_color="*neutral_100",
+        body_text_color_dark="*neutral_100",
+        body_text_color_subdued="*neutral_400",
+        # label_text_color="*neutral_200",
+        # label_background_fill="*neutral_900",
+        # 按钮颜色
+        button_primary_background_fill="*primary_600",
+        button_primary_background_fill_hover="*primary_500",
+        button_primary_text_color="white",
+        button_secondary_background_fill="*neutral_700",
+        button_secondary_background_fill_hover="*neutral_600",
+        button_cancel_background_fill="*red_600",
+        button_cancel_background_fill_hover="*red_500",
+        # 其他元素
+        block_shadow="*shadow_md",
+        table_border_color="*neutral_800",
+        table_even_background_fill="*neutral_850",
+        table_odd_background_fill="*neutral_900",
+        # 颜色覆盖
+        color_accent="*primary_500",
+        color_accent_soft="*primary_100",
+    ),
     css=custom_css
 ) as app:
     

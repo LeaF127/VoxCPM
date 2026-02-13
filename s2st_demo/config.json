@@ -1,0 +1,22 @@
+{
+  "api": {
+    "url": "http://localhost:8000",
+    "endpoint": "/s2st",
+    "timeout": 30000
+  },
+  "audio": {
+    "maxFileSize": 104857600,
+    "sampleRate": 16000,
+    "channels": 1
+  },
+  "response": {
+    "audioField": "audio",
+    "audioType": "url",
+    "sourceTextField": "src_text",
+    "targetTextField": "tgt_text"
+  },
+  "ui": {
+    "showTextResults": true,
+    "autoPlayAudio": true
+  }
+}

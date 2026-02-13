@@ -1,11 +1,55 @@
 launch.json
 __pycache__
 voxcpm.egg-info
-
 *.log
+
 s2st_demo/output/
 examples/*.wav
 s2st_demo/input/*.wav
 .cursor/
 .DS_Store
 sh
+models/
+
+# 环境配置文件（包含敏感信息）
+.env
+.env.local
+.env.*.local
+
+# Python 虚拟环境
+venv/
+env/
+ENV/
+
+# 测试的音频文件
+*.wav
+
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+*.tmp
+
+# 编译文件
+*.pyc
+*.pyo
+*.pyd
+
+# IDE 配置文件
+.idea/
+.vscode/
+
+# 依赖包
+dist/
+build/
+*.egg-info/
+*.egg
+*.whl
+
+# Docker 配置文件
+.dockerignore
+.dockerenv
+.dockerignore
+.dockerenv
+.dockerignore

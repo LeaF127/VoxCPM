@@ -2,8 +2,10 @@
 时间统计工具类，用于记录和计算端到端语音翻译流程的各项性能指标。
 """
 import time
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
+from typing import Optional, List, Dict
+
+__all__ = ["TimingStats", "TimingStatsCollector"]
 
 
 @dataclass
@@ -23,6 +25,10 @@ class TimingStats:
     # 音频时长（秒）
     input_audio_duration: Optional[float] = None  # 单句话输入音频时长
     output_audio_duration: Optional[float] = None  # 单句话输出音频时长
+
+    # 获取发送间隔时间
+    def __init__(self, asr_send_interval: float = 0.1):
+        self.asr_send_interval = asr_send_interval
 
     def calculate_metrics(self) -> Dict[str, Optional[float]]:
         """计算各项指标"""
@@ -76,17 +82,17 @@ class TimingStats:
 
         # 指标
         lines.append("\n性能指标:")
-        if metrics["asr_latency"] is not None:
+        if metrics.get("asr_latency") is not None:
             lines.append(f"  ASR 总延迟:       {metrics['asr_latency']*1000:.2f} ms")
-        if metrics["asr_rtf"] is not None:
+        if metrics.get("asr_rtf") is not None:
             lines.append(f"  ASR RTF:           {metrics['asr_rtf']:.4f}")
-        if metrics["tts_latency"] is not None:
+        if metrics.get("tts_latency") is not None:
             lines.append(f"  TTS 总延迟:       {metrics['tts_latency']*1000:.2f} ms")
-        if metrics["tts_rtf"] is not None:
+        if metrics.get("tts_rtf") is not None:
             lines.append(f"  TTS RTF:           {metrics['tts_rtf']:.4f}")
-        if metrics["system_e2e"] is not None:
+        if metrics.get("system_e2e") is not None:
             lines.append(f"  系统总延迟:       {metrics['system_e2e']:.4f} s")
-        if metrics["system_rtf"] is not None:
+        if metrics.get("system_rtf") is not None:
             lines.append(f"  系统RTF:           {metrics['system_rtf']:.4f}")
 
         lines.append("=" * 80)
@@ -125,7 +131,7 @@ class TimingStatsCollector:
 
     def format_summary_report(self, debug: bool = False) -> str:
         """格式化汇总报告（多句时使用）
-        
+
         Args:
             debug: 如果为 True，输出所有时间点（包括None）和所有计算的指标
         """
@@ -177,7 +183,7 @@ class TimingStatsCollector:
         lines.append("\n各句详细统计:")
         for i, stats in enumerate(self.stats_list, 1):
             lines.append(f"\n--- 第 {i} 句 ---")
-            
+
             if debug:
                 # Debug 模式：显示所有时间点
                 lines.append("  时间点 (秒):")
@@ -188,9 +194,9 @@ class TimingStatsCollector:
                 lines.append(f"    T4: {stats.t4:.4f}" if stats.t4 is not None else "    T4: None")
                 lines.append(f"    单句话输入音频时长: {stats.input_audio_duration:.4f}" if stats.input_audio_duration is not None else "    单句话输入音频时长: None")
                 lines.append(f"    单句话输出音频时长: {stats.output_audio_duration:.4f}" if stats.output_audio_duration is not None else "    单句话输出音频时长: None")
-            
+
             metrics = stats.calculate_metrics()
-            
+
             if debug:
                 # Debug 模式：显示所有计算的指标
                 lines.append("  计算的指标:")
@@ -208,19 +214,14 @@ class TimingStatsCollector:
                         lines.append(f"    {chinese_name}: None")
             else:
                 # 非 Debug 模式：只显示有值的指标
-                if metrics["asr_latency"] is not None:
+                if metrics.get("asr_latency") is not None:
                     lines.append(f"  ASR 总延迟: {metrics['asr_latency']*1000:.2f} ms")
-                if metrics["tts_latency"] is not None:
+                if metrics.get("tts_latency") is not None:
                     lines.append(f"  TTS 总延迟: {metrics['tts_latency']*1000:.2f} ms")
-                # if metrics["system_e2e"] is not None:
-                #     lines.append(f"  系统总延迟: {metrics['system_e2e']:.4f} s")
-                if metrics["asr_rtf"] is not None:
+                if metrics.get("asr_rtf") is not None:
                     lines.append(f"  ASR RTF: {metrics['asr_rtf']:.4f}")
-                if metrics["tts_rtf"] is not None:
+                if metrics.get("tts_rtf") is not None:
                     lines.append(f"  TTS RTF: {metrics['tts_rtf']:.4f}")
-                # if metrics["system_rtf"] is not None:
-                #     lines.append(f"  系统RTF: {metrics['system_rtf']:.4f}")
 
         lines.append("=" * 80)
         return "\n".join(lines)
-

@@ -10,7 +10,8 @@ else:
 # print(os.environ["PYTHONPATH"])
 
 from voxcpm.utils import get_test_logger
-from asr_translate import ASRTranslator
+# 使用新的导入路径（兼容层仍支持旧导入）
+from s2st_demo.clients.asr_websocket import ASRWebSocketClient as ASRTranslator
 
 
 def parse_args() -> argparse.Namespace:

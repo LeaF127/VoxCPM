@@ -1,7 +1,19 @@
+"""
+API 测试客户端。
+
+用于测试流式 S2ST API 的命令行工具。
+"""
 import argparse
 import os
+import sys
+import time
+from pathlib import Path
+
+# 添加父目录到 Python 路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import requests
-from time import time
+
 
 def main():
     parser = argparse.ArgumentParser(description="测试流式 S2ST API")
@@ -14,9 +26,9 @@ def main():
     parser.add_argument("--to-lang", default="en", help="目标语言代码")
     parser.add_argument("--tts-text-source", default="trans", help="TTS 文本来源：trans=翻译结果，asr=识别结果")
     parser.add_argument("--normalize", default="true", help="是否启用文本正则化")
-    
+
     args = parser.parse_args()
-    
+
     # 验证必填参数
     if not args.ws_url:
         print("错误: --ws-url 参数或环境变量 WS_URL 必须提供")
@@ -27,9 +39,14 @@ def main():
     if not args.token:
         print("错误: --token 参数或环境变量 TOKEN 必须提供")
         return
-    
+
     url = args.url
-    files = {"audio_file": open(args.audio, "rb")}
+    audio_path = Path(args.audio)
+    if not audio_path.exists():
+        print(f"错误: 音频文件不存在: {audio_path}")
+        return
+
+    files = {"audio_file": open(audio_path, "rb")}
     data = {
         "ws_url": args.ws_url,
         "user_id": args.user_id,
@@ -41,7 +58,7 @@ def main():
     }
 
     response = requests.post(url, files=files, data=data, stream=True)
-    start_time = time()
+    start_time = time.time()
     for line in response.iter_lines():
         if line:
             # 解析 SSE 事件
@@ -50,15 +67,16 @@ def main():
                 event_data = json.loads(line[6:])  # 去掉 "data: " 前缀
                 event_type = event_data["event_type"]
                 data = event_data["data"]
-                
+
                 if event_type == "segment":
                     print(f"句 {data['segment_index']}: {data['asr_text']} -> {data['trans_text']}")
-                    print(f"耗时: {time() - start_time:.2f} 秒")
-                    start_time = time()
+                    print(f"耗时: {time.time() - start_time:.2f} 秒")
+                    start_time = time.time()
                 elif event_type == "complete":
                     print(f"完成！输出文件: {data['output_file']}")
                 elif event_type == "error":
                     print(f"错误: {data['message']}")
+
 
 if __name__ == "__main__":
     main()

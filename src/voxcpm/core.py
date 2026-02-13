@@ -4,6 +4,7 @@ import tempfile
 import numpy as np
 from typing import Generator, List, Tuple, Optional
 from huggingface_hub import snapshot_download
+import torch
 from .model.voxcpm import VoxCPMModel, LoRAConfig
 
 class VoxCPM:
