@@ -1,0 +1,21 @@
+[Unit]
+Description=VoxCPM TTS API Service
+After=network.target
+
+[Service]
+Type=simple
+User=your_username
+WorkingDirectory=/work/voxcpm
+Environment="HOST=0.0.0.0"
+Environment="PORT=19365"
+Environment="MODEL_DIR=models/openbmb__VoxCPM-0.5B"
+ExecStart=/work/conda/envs/voxcpm/bin/python /work/voxcpm/api.py --host $HOST --port $PORT --model_dir $MODEL_DIR
+Restart=always
+RestartSec=10
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
